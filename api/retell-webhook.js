@@ -50,10 +50,15 @@ async function checkAvailability(args) {
 }
 
 async function bookAppointment(args) {
-    const { name, phone, issue, date, time } = args;
+    const { name, phone, date, time } = args;
+
+    // Robustly extract the issue/reason from various potential keys
+    const issueDesc = args.issue || args.reason || args.description || args.notes || args.query || "General Consultation";
+
     const timestamp = `${date}T${time}:00`;
 
     console.log('Booking requested:', args);
+    console.log('Extracted issue description:', issueDesc);
 
     if (!supabase) return { success: false, message: "Database connection failed" };
 
@@ -66,7 +71,7 @@ async function bookAppointment(args) {
             id: `demo-${Date.now()}`,
             patient_name: name,
             phone_number: phone,
-            issue_description: issue,
+            issue_description: issueDesc,
             appointment_time: timestamp,
             status: 'confirmed'
         }
