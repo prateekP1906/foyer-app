@@ -174,10 +174,21 @@ async function bookAppointment(args) {
         }
     });
 
-    // CONSTRAINT: Do not save to DB for demo
-    // const { data, error } = await supabase
-    //     .from('appointments')
-    //     .insert([ ... ]);
+    // Insert into database
+    const { error } = await supabase
+        .from('appointments')
+        .insert([{
+            patient_name: name,
+            phone_number: phone,
+            issue_description: issue,
+            appointment_time: timestamp,
+            status: 'confirmed'
+        }]);
+
+    if (error) {
+        console.error('Error inserting appointment:', error);
+        return { success: false, message: "Failed to save appointment" };
+    }
 
     return { success: true, message: `Booked for ${time}` };
 }
