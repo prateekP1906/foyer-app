@@ -1,8 +1,10 @@
-require('dotenv').config();
-const express = require('express');
-const bodyParser = require('body-parser');
-const cors = require('cors');
-const { createClient } = require('@supabase/supabase-js');
+import dotenv from 'dotenv';
+dotenv.config();
+
+import express from 'express';
+import bodyParser from 'body-parser';
+import cors from 'cors';
+import { createClient } from '@supabase/supabase-js';
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -85,17 +87,33 @@ app.post('/retell-webhook', async (req, res) => {
         res.json(result);
 
     } catch (error) {
+        import('fs').then(fs => fs.writeFileSync('webhook-error.log', String(error.stack || error)));
         console.error('Error processing Retell webhook:', error);
         res.status(500).send('Internal Server Error');
     }
 });
 
 async function checkAvailability(args) {
-    const { requested_date, requested_time } = args;
+    const requested_date = args.requested_date || args.date;
+    let requested_time = args.requested_time || args.time;
 
     if (!requested_date || !requested_time) {
         return { available: false, message: 'I need a specific date and time to check.' };
     }
+
+    // Clean up time (e.g. from "10:30 AM" to "10:30")
+    let timeMatch = requested_time.match(/(\d+):?(\d*)\s*(am|pm|a|p)?/i);
+    let hours = 9, minutes = 0;
+    if (timeMatch) {
+        hours = parseInt(timeMatch[1], 10);
+        minutes = timeMatch[2] ? parseInt(timeMatch[2], 10) : 0;
+        let ampm = timeMatch[3] ? timeMatch[3].toLowerCase() : null;
+        if (ampm && ampm.startsWith('p') && hours < 12) hours += 12;
+        if (ampm && ampm.startsWith('a') && hours === 12) hours = 0;
+    }
+    const hh = String(hours).padStart(2, '0');
+    const mm = String(minutes).padStart(2, '0');
+    requested_time = `${hh}:${mm}`;
 
     // 1. Check business hours
     if (!isBusinessHours(requested_date, requested_time)) {
@@ -103,10 +121,7 @@ async function checkAvailability(args) {
     }
 
     // 2. Check DB
-    // Construct timestamp: "YYYY-MM-DDTHH:mm:00" (Assuming local or UTC, keeping simple as per brief)
-    // Ideally we handle timezones, but for this brief we'll treat strings as strict matches or ISO
-    const timestamp = `${requested_date}T${requested_time}:00`;
-    // Note: This matches the exact timestamp. In a real app we might check ranges.
+    const timestamp = `${requested_date}T${hh}:${mm}:00`;
 
     // Check if any appointment exists at this exact time
     const { data, error } = await supabase
@@ -115,12 +130,12 @@ async function checkAvailability(args) {
         .eq('appointment_time', timestamp);
 
     if (error) {
-        console.error('Database error:', error);
+        console.error('Database error in checkAvailability:', error);
         return { available: false, reason: "Database error" };
     }
 
     if (data && data.length > 0) {
-        return { available: false, reason: "Slot taken" };
+        return { available: false, reason: "Slot is already taken." };
     }
 
     return { available: true };
@@ -154,10 +169,31 @@ app.get('/api/create-web-call', async (req, res) => {
 });
 
 async function bookAppointment(args) {
-    const { name, phone, issue, date, time } = args;
-    const timestamp = `${date}T${time}:00`;
+    const name = args.name || args.patient_name || args.userName || "Unknown";
+    const phone = args.phone || args.phone_number || args.phoneNumber || "Unknown";
+    const date = args.date || args.requested_date;
+    let time = args.time || args.requested_time;
+
+    // Robustly extract the issue/reason from various potential keys
+    const issueDesc = args.issue || args.reason || args.description || args.notes || args.query || "General Consultation";
+
+    // Clean up time format
+    let timeMatch = time ? time.match(/(\d+):?(\d*)\s*(am|pm|a|p)?/i) : null;
+    let hours = 9, minutes = 0;
+    if (timeMatch) {
+        hours = parseInt(timeMatch[1], 10);
+        minutes = timeMatch[2] ? parseInt(timeMatch[2], 10) : 0;
+        let ampm = timeMatch[3] ? timeMatch[3].toLowerCase() : null;
+        if (ampm && ampm.startsWith('p') && hours < 12) hours += 12;
+        if (ampm && ampm.startsWith('a') && hours === 12) hours = 0;
+    }
+    const hh = String(hours).padStart(2, '0');
+    const mm = String(minutes).padStart(2, '0');
+
+    const timestamp = `${date}T${hh}:${mm}:00`;
 
     console.log('Booking requested:', args);
+    console.log('Extracted issue description:', issueDesc);
 
     // Broadcast to the 'demo-room' channel for real-time UI updates
     const channel = supabase.channel('demo-room');
@@ -180,7 +216,7 @@ async function bookAppointment(args) {
         .insert([{
             patient_name: name,
             phone_number: phone,
-            issue_description: issue,
+            issue_description: issueDesc,
             appointment_time: timestamp,
             status: 'confirmed'
         }]);

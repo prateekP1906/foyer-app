@@ -16,11 +16,26 @@ const isBusinessHours = (dateStr, timeStr) => {
 };
 
 async function checkAvailability(args) {
-    const { requested_date, requested_time } = args;
+    const requested_date = args.requested_date || args.date;
+    let requested_time = args.requested_time || args.time;
 
     if (!requested_date || !requested_time) {
         return { available: false, message: 'I need a specific date and time to check.' };
     }
+
+    // Clean up time (e.g. from "10:30 AM" to "10:30")
+    let timeMatch = requested_time.match(/(\d+):?(\d*)\s*(am|pm|a|p)?/i);
+    let hours = 9, minutes = 0;
+    if (timeMatch) {
+        hours = parseInt(timeMatch[1], 10);
+        minutes = timeMatch[2] ? parseInt(timeMatch[2], 10) : 0;
+        let ampm = timeMatch[3] ? timeMatch[3].toLowerCase() : null;
+        if (ampm && ampm.startsWith('p') && hours < 12) hours += 12;
+        if (ampm && ampm.startsWith('a') && hours === 12) hours = 0;
+    }
+    const hh = String(hours).padStart(2, '0');
+    const mm = String(minutes).padStart(2, '0');
+    requested_time = `${hh}:${mm}`;
 
     // 1. Check business hours
     if (!isBusinessHours(requested_date, requested_time)) {
@@ -28,7 +43,7 @@ async function checkAvailability(args) {
     }
 
     // 2. Check DB
-    const timestamp = `${requested_date}T${requested_time}:00`;
+    const timestamp = `${requested_date}T${hh}:${mm}:00`;
 
     if (!supabase) return { available: false, reason: "Database connection failed" };
 
@@ -43,19 +58,35 @@ async function checkAvailability(args) {
     }
 
     if (data && data.length > 0) {
-        return { available: false, reason: "Slot taken" };
+        return { available: false, reason: "Slot is already taken." };
     }
 
     return { available: true };
 }
 
 async function bookAppointment(args) {
-    const { name, phone, date, time } = args;
+    const name = args.name || args.patient_name || args.userName || "Unknown";
+    const phone = args.phone || args.phone_number || args.phoneNumber || "Unknown";
+    const date = args.date || args.requested_date;
+    let time = args.time || args.requested_time;
 
     // Robustly extract the issue/reason from various potential keys
     const issueDesc = args.issue || args.reason || args.description || args.notes || args.query || "General Consultation";
 
-    const timestamp = `${date}T${time}:00`;
+    // Clean up time format
+    let timeMatch = time ? time.match(/(\d+):?(\d*)\s*(am|pm|a|p)?/i) : null;
+    let hours = 9, minutes = 0;
+    if (timeMatch) {
+        hours = parseInt(timeMatch[1], 10);
+        minutes = timeMatch[2] ? parseInt(timeMatch[2], 10) : 0;
+        let ampm = timeMatch[3] ? timeMatch[3].toLowerCase() : null;
+        if (ampm && ampm.startsWith('p') && hours < 12) hours += 12;
+        if (ampm && ampm.startsWith('a') && hours === 12) hours = 0;
+    }
+    const hh = String(hours).padStart(2, '0');
+    const mm = String(minutes).padStart(2, '0');
+
+    const timestamp = `${date}T${hh}:${mm}:00`;
 
     console.log('Booking requested:', args);
     console.log('Extracted issue description:', issueDesc);
